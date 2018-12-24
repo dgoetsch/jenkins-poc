@@ -1,9 +1,9 @@
 pipeline {
     agent any
     stages {
-        stage("Say Hello") {
+        stage("Build release") {
             steps {
-                sh "echo 'Hello Pipeline'"
+                sh "cargo build --release"
             }
         }
     }
