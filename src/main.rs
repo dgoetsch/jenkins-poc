@@ -2,18 +2,15 @@ extern crate clap;
 extern crate threadpool;
 extern crate memmap;
 
-use clap::{Arg, App, SubCommand};
+use clap::{Arg, App};
 use std::fs::{self, File};
-use std::sync::mpsc::{Sender, Receiver, SendError};
+use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::thread;
-use std::io;
-use std::io::prelude::*;
 use std::path::PathBuf;
 use self::memmap::Mmap;
 use self::threadpool::ThreadPool;
-use std::time::{Duration, SystemTime};
-use std::io::{Write, Stdout};
+use std::io::Write;
 
 #[macro_use]
 extern crate log;
@@ -50,11 +47,12 @@ fn main() {
 
     let search = Search::new(tx, result_sender, num_workers);
    
-    init_logger(matches.value_of("log_level"), matches.value_of("debug_file"));
-
-    matches.value_of("path")
-        .and_then(|path| matches.value_of("query").map(|query| Ok((PathBuf::from(path), query.to_string()))))
-        .unwrap_or( Err(AppError::Startup("Missing Required Params".to_string())))
+    init_logger(matches.value_of("log_level"), matches.value_of("debug_file"))
+        .and_then(|()|
+            matches.value_of("path")
+                .and_then(|path| matches.value_of("query").map(|query| Ok((PathBuf::from(path), query.to_string()))))
+                .unwrap_or( Err(AppError::Startup("Missing Required Params".to_string())))
+        )
         .and_then(|(path, query)| search.search(path, query))
         .map(|()| Search::process_queries(search, rx, result_receiver))
         .err().iter()
@@ -75,18 +73,26 @@ fn init_logger(log_level: Option<&str>, debug_file: Option<&str>) -> Result<(), 
         })
         .unwrap_or(LevelFilter::Off);
 
-    let mut loggers:  Vec<Box<SharedLogger>> = vec![ WriteLogger::new(log_level, Config::default(), std::io::stderr())];
 
-    debug_file.into_iter()
-        .for_each(|file_name| {
+    debug_file
+        .into_iter()
+        .map(|file_name| {
             File::create(file_name)
-                .or_else(|err| File::open(file_name))
-                .map(|file|
-                    loggers.push(WriteLogger::new(LevelFilter::Debug, Config::default(), file)));
-        });
+                .or_else(|_| File::open(file_name))
+                .map_err(|e| AppError::FileIO(e.to_string()))
+        })
+        .map(|file| {
+            let mut loggers:  Vec<Box<SharedLogger>> = vec![ WriteLogger::new(log_level, Config::default(), std::io::stderr())];
+            file
+                .map(|file| loggers.push(WriteLogger::new(LevelFilter::Debug, Config::default(), file)))
+                .and_then(|_|
+                    CombinedLogger::init(loggers)
+                        .map_err(|err| { AppError::Startup(format!("Could not initialize logger because {:?}", err)) }))
+        })
+        .next()
+        .unwrap_or(Result::Ok(()))
             
-    CombinedLogger::init(loggers)
-        .map_err(|err| { AppError::Startup(format!("Could not initialize logger because {:?}", err)) })
+    
 }
 
 #[derive(Debug, Clone)]
@@ -94,7 +100,9 @@ enum AppError {
     Startup(String),
     FileIO(String),
     Send(String),
-    Aggregate(Vec<AppError>)
+    Receive(String),
+    Aggregate(Vec<AppError>),
+    Application(String)
 }
 
 struct Search {
@@ -106,7 +114,6 @@ struct Search {
 #[derive(Debug, Clone)]
 enum SearchResult {
     Contents(String, usize),
-    File(String),
     Dir(String),
     Error(AppError, (PathBuf, String))
 }
@@ -133,13 +140,16 @@ impl Search {
         }
     }
 
-    fn process_queries(search: Search, rx: Receiver<(PathBuf, String)>, result_receiver: Receiver<SearchResult>) {
+    fn process_queries(search: Search, rx: Receiver<(PathBuf, String)>, result_receiver: Receiver<SearchResult>) -> Result<(), AppError> {
         let query_thread = thread::spawn(move || {
-            let mut next_query = rx.try_recv();
+            let mut next_query = rx.try_recv().map_err(|e| AppError::Receive(e.to_string()));
             while next_query.is_ok() {
-                next_query
-                    .map(|(path, query)| search.search(path, query));
-                next_query = rx.try_recv();
+                next_query = next_query
+                    .and_then(|(path, query)| search.search(path, query))
+                    .and_then(|()| rx
+                        .try_recv()
+                        .map_err(|e| AppError::Receive(e.to_string())));
+                
             }
 
             search.thread_pool.join();
@@ -152,7 +162,6 @@ impl Search {
                 next_result.map(|search_result| {
                     match search_result {
                         SearchResult::Contents(path, pos) => writer.write_fmt(format_args!("{}::{}\n", path, pos)),
-                        SearchResult::File(path) => writer.write_fmt(format_args!("{}\n", path)),
                         SearchResult::Dir(path) => writer.write_fmt(format_args!("{}\n", path)),
                         SearchResult::Error(error, (path, query)) => {
                             error!("Error while searching {:?} for {}: {:?}", path, query, error);
@@ -164,14 +173,16 @@ impl Search {
                 .for_each(|err| error!("Error while reporting result: {:?}", err));
                 next_result = result_receiver.recv();
             }
-            writer.flush();
+
+            writer.flush()
         });
 
         
         debug!("waiting for queries");
-        query_thread.join();
-        debug!("waiting for results");
-        result_thread.join();
+        query_thread.join()
+            .and_then(|_| result_thread.join())
+            .map(|_| ())
+            .map_err(|_| AppError::Application(String::from("failed to join workers")))
     }
 
     fn search(&self, path: PathBuf, query: String) -> Result<(), AppError> {
@@ -252,7 +263,7 @@ impl Search {
         });
 
         path.to_str()
-            .filter(|p| path.file_name().and_then(|os_str| os_str.to_str()).unwrap_or("").contains(query.as_str()))
+            .filter(|_| path.file_name().and_then(|os_str| os_str.to_str()).unwrap_or("").contains(query.as_str()))
             .map(|p| self.result_sender.send(SearchResult::Dir(p.to_string())).map_err(|err| AppError::Send(err.to_string())))
             .unwrap_or(Ok(()))
     }
