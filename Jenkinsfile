@@ -3,7 +3,7 @@ pipeline {
     stages {
         stage("Build release") {
             steps {
-                sh "cargo build --release"
+                echo "hello world"
             }
         }
     }

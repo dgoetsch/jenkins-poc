@@ -201,6 +201,7 @@ impl Search {
 
     fn search_dir(&self, path: PathBuf, query: String) -> Result<(), AppError> {
         path.clone().to_str()
+        
             .filter(|p| p.to_string().ends_with(query.as_str()))
             .map(|p| self.result_sender.send(SearchResult::Dir(p.to_string())));
 
