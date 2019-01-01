@@ -4,7 +4,7 @@ pipeline {
             label 'declarative'
             containerTemplate {
                 name 'search-app-build'
-                image 'alpine:latest'
+                image 'rust:1.31.1-slim'
                 ttyEnabled true
                 command 'cat'
             }
@@ -13,7 +13,7 @@ pipeline {
     stages {
         stage("Build release") {
             steps {
-                echo "hello world"
+                sh "cargo build --release"
             }
         }
     }
