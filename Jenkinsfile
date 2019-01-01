@@ -1,19 +1,27 @@
 pipeline {
     agent {
         kubernetes {
-            label 'declarative'
-            containerTemplate {
-                name 'search-app-build'
-                image 'rust:1.31.1-slim'
-                ttyEnabled true
-                command 'cat'
-            }
+            label 'search-app-build'
+            yamlFile 'ci/k8s/pod.yml'
         }
     }
     stages {
-        stage("Build release") {
-            steps {
-                sh "cargo build --release"
+        stage("build") {
+            parallel {
+                stage("Linux") {
+                    steps {
+                        container("rust") {
+                            sh "cargo build --release"
+                        }
+                    }
+                }
+                stage("Docker image") {
+                    steps {
+                        container("dind") {
+                            sh "docker build ."
+                        }
+                    }
+                }
             }
         }
     }
