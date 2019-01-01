@@ -2,7 +2,7 @@ pipeline {
     agent {
         kubernetes {
             label 'search-app-build'
-            yamlFile 'ci/k8s/pod.yml'
+            yamlFile 'ci/pipeline/pod.yml'
         }
     }
     stages {

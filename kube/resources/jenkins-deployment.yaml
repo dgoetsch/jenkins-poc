@@ -1,0 +1,38 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f docker-compose.yml
+    kompose.version: 1.17.0 (a74acad)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: jenkins
+  name: jenkins
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        io.kompose.service: jenkins
+    spec:
+      serviceAccountName: jenkins
+      containers:
+      - image: dgoetsch/jenkins-ci
+        name: jenkins
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        - containerPort: 50000
+        resources: {}
+        volumeMounts:
+        - mountPath: /var/jenkins_home
+          name: jenkins-home
+      restartPolicy: Always
+      volumes:
+      - name: jenkins-home
+        persistentVolumeClaim:
+          claimName: jenkins-home
+status: {}
