@@ -23,6 +23,11 @@ spec:
       - image: dgoetsch/jenkins-ci
         name: jenkins
         imagePullPolicy: Always
+        env:
+        - name: ADMIN_USERNAME
+          value: "one-time"
+        - name: ADMIN_PASSWORD
+          value: "ADMIN_PASSWORD_VALUE"
         ports:
         - containerPort: 8080
         - containerPort: 50000
